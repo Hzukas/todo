@@ -1,0 +1,273 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>To-Do</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: #000; color: #fff; font: 16px/1.4 system-ui, sans-serif; }
+  body { padding: 16px; }
+
+  /* mic */
+  #mic {
+    display: block; margin: 0 auto 8px; width: 140px; height: 140px; border-radius: 50%;
+    background: #000; color: #fff; border: 3px solid #fff; font-size: 64px; cursor: pointer;
+  }
+  #mic.listening { background: #fff; color: #000; }
+  #mic:disabled { opacity: .3; cursor: default; }
+  #status { text-align: center; min-height: 1.4em; opacity: .7; margin-bottom: 8px; }
+  #typed { display: flex; gap: 8px; max-width: 700px; margin: 0 auto 24px; }
+  #typed input { flex: 1; background: #000; color: #fff; border: 1px solid #555; padding: 8px; font: inherit; }
+  #typed button { background: #000; color: #fff; border: 1px solid #fff; padding: 8px 14px; font: inherit; cursor: pointer; }
+
+  /* lists */
+  #active { display: flex; gap: 24px; }
+  .col { flex: 1; min-width: 0; }
+  h2 { font-size: 14px; font-weight: normal; text-transform: uppercase; letter-spacing: .1em; opacity: .7; margin: 0 0 8px; }
+  ul { list-style: none; margin: 0; padding: 0; min-height: 60px; border: 1px dashed #333; }
+  li { display: flex; align-items: center; gap: 8px; padding: 8px; border-bottom: 1px solid #222; }
+  li .grip { flex: none; width: 18px; opacity: .4; cursor: grab; touch-action: none; user-select: none; font-size: 18px; line-height: 1; }
+  li.dragging { opacity: .4; background: #111; }
+  #ghost { position: fixed; pointer-events: none; opacity: .8; background: #000; border: 1px solid #fff; padding: 8px; z-index: 9; }
+  li input[type=checkbox] { width: 20px; height: 20px; flex: none; cursor: pointer; }
+  li .text { flex: 1; min-width: 0; outline: none; overflow-wrap: break-word; }
+  li .color { width: 22px; height: 22px; padding: 0; border: 1px solid #555; background: none; flex: none; cursor: pointer; }
+  li .del { background: none; border: none; color: #fff; opacity: .4; font-size: 18px; cursor: pointer; flex: none; }
+  li .del:hover { opacity: 1; }
+
+  #done-wrap { margin-top: 32px; }
+  #done li .text { text-decoration: line-through; opacity: .5; }
+  #clear { background: none; border: 1px solid #555; color: #fff; padding: 4px 10px; font: inherit; cursor: pointer; margin-left: 12px; }
+
+  @media (max-width: 600px) { #active { flex-direction: column; } }
+</style>
+</head>
+<body>
+
+<button id="mic" title="Speak your items">&#127908;</button>
+<div id="status"></div>
+<form id="typed">
+  <input id="typed-in" placeholder="or type an item and press Enter" autocomplete="off">
+  <button type="submit">Add</button>
+</form>
+
+<div id="active">
+  <div class="col">
+    <h2>Short term</h2>
+    <ul id="short" data-list="short"></ul>
+  </div>
+  <div class="col">
+    <h2>Long term</h2>
+    <ul id="long" data-list="long"></ul>
+  </div>
+</div>
+
+<div id="done-wrap">
+  <h2 style="display:flex;align-items:center">Finished <button id="clear">clear</button></h2>
+  <ul id="done" data-list="done"></ul>
+</div>
+
+<script>
+// ---------- state ----------
+const KEY = 'todo-v1';
+function load() { try { return JSON.parse(localStorage.getItem(KEY)); } catch (e) { return null; } }
+let state = load() || { short: [], long: [], done: [] };
+const save = () => { try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (e) {} };
+const uid = () => Math.random().toString(36).slice(2, 10);
+
+function addItem(text, list) {
+  state[list].push({ id: uid(), text: text, color: '#ffffff' });
+}
+function findItem(id) {
+  for (const list of ['short', 'long', 'done']) {
+    const i = state[list].findIndex(x => x.id === id);
+    if (i >= 0) return { list: list, i: i, item: state[list][i] };
+  }
+  return null;
+}
+
+// ---------- render ----------
+function render() {
+  for (const list of ['short', 'long', 'done']) {
+    const ul = document.getElementById(list);
+    ul.innerHTML = '';
+    for (const item of state[list]) ul.appendChild(renderItem(item, list));
+  }
+  save();
+}
+
+function renderItem(item, list) {
+  const li = document.createElement('li');
+  li.dataset.id = item.id;
+
+  const cb = document.createElement('input');
+  cb.type = 'checkbox';
+  cb.checked = list === 'done';
+  cb.onchange = () => {
+    const f = findItem(item.id);
+    state[f.list].splice(f.i, 1);
+    if (cb.checked) { item.from = f.list; state.done.unshift(item); }
+    else { state[item.from || 'short'].push(item); }
+    render();
+  };
+
+  const text = document.createElement('div');
+  text.className = 'text';
+  text.textContent = item.text;
+  text.style.color = item.color;
+  if (list !== 'done') {
+    text.contentEditable = 'true';
+    text.spellcheck = false;
+    text.onblur = () => { item.text = text.textContent.trim() || item.text; render(); };
+    text.onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); text.blur(); } };
+  }
+
+  const color = document.createElement('input');
+  color.type = 'color';
+  color.className = 'color';
+  color.value = item.color;
+  color.oninput = () => { item.color = color.value; text.style.color = item.color; save(); };
+
+  const del = document.createElement('button');
+  del.className = 'del';
+  del.textContent = '×';
+  del.title = 'Remove';
+  del.onclick = () => { const f = findItem(item.id); state[f.list].splice(f.i, 1); render(); };
+
+  if (list !== 'done') {
+    const grip = document.createElement('div');
+    grip.className = 'grip';
+    grip.textContent = '≡';
+    grip.onpointerdown = e => startDrag(e, li);
+    li.append(grip);
+  }
+  li.append(cb, text, color, del);
+  return li;
+}
+
+// ---------- drag & drop (pointer events: works with mouse and touch) ----------
+function startDrag(e, li) {
+  e.preventDefault();
+  const grip = e.currentTarget;
+  grip.setPointerCapture(e.pointerId);
+  li.classList.add('dragging');
+  const ghost = document.createElement('div');
+  ghost.id = 'ghost';
+  ghost.textContent = li.querySelector('.text').textContent;
+  ghost.style.width = li.offsetWidth + 'px';
+  document.body.appendChild(ghost);
+
+  const move = ev => {
+    ghost.style.left = (ev.clientX - 20) + 'px';
+    ghost.style.top = (ev.clientY - 20) + 'px';
+    const under = document.elementFromPoint(ev.clientX, ev.clientY);
+    if (!under) return;
+    const ul = under.closest('#short, #long');
+    if (!ul) return;
+    const over = under.closest('li');
+    if (over && over !== li) {
+      const r = over.getBoundingClientRect();
+      ul.insertBefore(li, ev.clientY < r.top + r.height / 2 ? over : over.nextSibling);
+    } else if (!over) {
+      ul.appendChild(li);
+    }
+  };
+  const up = () => {
+    grip.removeEventListener('pointermove', move);
+    grip.removeEventListener('pointerup', up);
+    grip.removeEventListener('pointercancel', up);
+    li.classList.remove('dragging');
+    ghost.remove();
+    // rebuild state from DOM order
+    const all = [...state.short, ...state.long];
+    for (const list of ['short', 'long']) {
+      state[list] = [...document.getElementById(list).children]
+        .map(el => all.find(x => x.id === el.dataset.id)).filter(Boolean);
+    }
+    render();
+  };
+  grip.addEventListener('pointermove', move);
+  grip.addEventListener('pointerup', up);
+  grip.addEventListener('pointercancel', up);
+}
+
+// ---------- input: typed ----------
+document.getElementById('typed').onsubmit = e => {
+  e.preventDefault();
+  const inp = document.getElementById('typed-in');
+  addMany(inp.value);
+  inp.value = '';
+};
+
+// ---------- splitting speech into items ----------
+function splitItems(raw) {
+  let s = ' ' + raw.trim() + ' ';
+  // phrases that mean "next item"
+  s = s.replace(/\b(and then|and also|then|also|next item|new item|next|another one|number \w+)\b/gi, '|');
+  s = s.replace(/[,;.!?]|\band\b/gi, '|');
+  return s.split('|')
+    .map(t => t.trim().replace(/^(um|uh|to|i need to|i have to|i want to|remember to)\s+/i, ''))
+    .filter(t => t.length > 1)
+    .map(t => t[0].toUpperCase() + t.slice(1));
+}
+
+function addMany(raw) {
+  const parts = splitItems(raw);
+  for (let p of parts) {
+    let list = 'short';
+    const m = p.match(/^(long[- ]term|longterm)[:\s]+(.*)/i);
+    if (m) { list = 'long'; p = m[2].trim(); if (p) p = p[0].toUpperCase() + p.slice(1); }
+    if (p) addItem(p, list);
+  }
+  render();
+  return parts.length;
+}
+
+// ---------- input: microphone ----------
+const mic = document.getElementById('mic');
+const status = document.getElementById('status');
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+let rec = null, listening = false;
+
+if (!SR) {
+  status.textContent = 'Voice input needs Chrome or Edge. You can still type items below.';
+  mic.disabled = true;
+} else {
+  rec = new SR();
+  rec.lang = 'en-US';
+  rec.continuous = true;
+  rec.interimResults = true;
+  let finalText = '';
+
+  rec.onstart = () => {
+    listening = true; finalText = '';
+    mic.classList.add('listening');
+    status.textContent = 'Listening... tap again to stop';
+  };
+  rec.onresult = e => {
+    let interim = '';
+    for (let i = e.resultIndex; i < e.results.length; i++) {
+      if (e.results[i].isFinal) finalText += e.results[i][0].transcript + ' ';
+      else interim += e.results[i][0].transcript;
+    }
+    status.textContent = (finalText + interim) || 'Listening...';
+  };
+  rec.onerror = e => { status.textContent = 'Mic error: ' + e.error; };
+  rec.onend = () => {
+    listening = false; mic.classList.remove('listening');
+    const n = finalText.trim() ? addMany(finalText) : 0;
+    status.textContent = n ? 'Added ' + n + (n > 1 ? ' items' : ' item') : 'Nothing heard';
+    setTimeout(() => { if (!listening) status.textContent = ''; }, 2500);
+  };
+
+  mic.onclick = () => { if (listening) rec.stop(); else rec.start(); };
+}
+
+// ---------- finished list ----------
+document.getElementById('clear').onclick = () => { state.done = []; render(); };
+
+render();
+</script>
+</body>
+</html>
