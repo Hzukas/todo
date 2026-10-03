@@ -10,6 +10,21 @@
   body { padding: 16px; }
   button { font: inherit; }
 
+  /* hamburger + drawer */
+  #menu { position: fixed; top: 10px; left: 10px; background: none; border: none; color: #fff; font-size: 28px; line-height: 1; padding: 6px 10px; cursor: pointer; opacity: .7; z-index: 5; }
+  #menu:hover { opacity: 1; }
+  #overlay { position: fixed; inset: 0; background: rgba(0,0,0,.6); display: none; z-index: 6; }
+  #drawer { position: fixed; top: 0; left: 0; bottom: 0; width: 260px; max-width: 80vw; background: #000; border-right: 1px solid #333; padding: 20px 0; transform: translateX(-100%); transition: transform .15s; z-index: 7; overflow-y: auto; }
+  body.open #overlay { display: block; }
+  body.open #drawer { transform: none; }
+  #drawer .row { display: flex; align-items: center; }
+  #drawer .row button.name { flex: 1; text-align: left; background: none; border: none; color: #fff; padding: 12px 20px; cursor: pointer; opacity: .7; }
+  #drawer .row button.name.on, #drawer .row button.name:hover { opacity: 1; }
+  #drawer .row button.x { background: none; border: none; color: #fff; opacity: .3; cursor: pointer; padding: 12px 16px; font-size: 18px; }
+  #drawer .row button.x:hover { opacity: 1; }
+  #drawer hr { border: none; border-top: 1px solid #333; margin: 8px 20px; }
+  #drawer #newlist { opacity: .5; }
+
   #mic {
     display: block; margin: 0 auto 6px; width: 140px; height: 140px; border-radius: 50%;
     background: #000; color: #fff; border: 3px solid #fff; font-size: 64px; cursor: pointer;
@@ -23,10 +38,11 @@
   #typed input:focus { border-color: #fff; }
   #dest button { background: none; border: none; color: #fff; opacity: .35; cursor: pointer; padding: 6px 8px; }
   #dest button.on { opacity: 1; }
+  body.custom #dest { display: none; }
 
   #active { display: flex; gap: 32px; }
   .col { flex: 1; min-width: 0; }
-  h2 { font-size: 13px; font-weight: normal; text-transform: uppercase; letter-spacing: .12em; opacity: .5; margin: 0 0 6px; }
+  h2 { font-size: 13px; font-weight: normal; text-transform: uppercase; letter-spacing: .12em; opacity: .5; margin: 0 0 6px; outline: none; }
   ul { list-style: none; margin: 0; padding: 0; min-height: 44px; }
   li { display: flex; align-items: center; gap: 10px; padding: 7px 0; }
   li .grip { flex: none; opacity: .3; cursor: grab; touch-action: none; user-select: none; font-size: 18px; line-height: 1; padding: 0 2px; }
@@ -48,6 +64,10 @@
 </head>
 <body>
 
+<button id="menu" title="Lists">&#9776;</button>
+<div id="overlay"></div>
+<nav id="drawer"></nav>
+
 <button id="mic" title="Speak your items">&#127908;</button>
 <div id="status"></div>
 <form id="typed">
@@ -55,20 +75,11 @@
   <span id="dest"><button type="button" data-v="short" class="on">Short</button><button type="button" data-v="long">Long</button></span>
 </form>
 
-<div id="active">
-  <div class="col">
-    <h2>Short term</h2>
-    <ul id="short" data-list="short"></ul>
-  </div>
-  <div class="col">
-    <h2>Long term</h2>
-    <ul id="long" data-list="long"></ul>
-  </div>
-</div>
+<div id="active"></div>
 
 <div id="done-wrap">
   <h2 style="display:flex;align-items:center">Finished <button id="clear">clear</button></h2>
-  <ul id="done" data-list="done"></ul>
+  <ul id="done"></ul>
 </div>
 
 <script>
@@ -76,42 +87,83 @@
 const KEY = 'todo-v1';
 function load() { try { return JSON.parse(localStorage.getItem(KEY)); } catch (e) { return null; } }
 let state = load() || { short: [], long: [], done: [] };
+if (!state.lists) state.lists = [];
 const save = () => { try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (e) {} };
 const uid = () => Math.random().toString(36).slice(2, 10);
+const cap = t => t ? t[0].toUpperCase() + t.slice(1) : t;
 
-function addItem(text, list) {
-  state[list].push({ id: uid(), text: text, color: '#ffffff' });
+let view = 'home';          // 'home' or a custom list id (always opens on home)
+let dest = 'short';         // destination for new items on the home view
+
+// The columns and finished array for whatever is on screen right now
+function cols() {
+  if (view === 'home') return [{ key: 'short', title: 'Short term', arr: state.short }, { key: 'long', title: 'Long term', arr: state.long }];
+  const l = state.lists.find(x => x.id === view);
+  return [{ key: 'list', title: l.name, arr: l.items, list: l }];
 }
+function doneArr() {
+  return view === 'home' ? state.done : state.lists.find(x => x.id === view).done;
+}
+function colByKey(key) { return cols().find(c => c.key === key); }
 function findItem(id) {
-  for (const list of ['short', 'long', 'done']) {
-    const i = state[list].findIndex(x => x.id === id);
-    if (i >= 0) return { list: list, i: i, item: state[list][i] };
+  for (const c of cols()) {
+    const i = c.arr.findIndex(x => x.id === id);
+    if (i >= 0) return { arr: c.arr, key: c.key, i: i, item: c.arr[i] };
   }
+  const d = doneArr(); const i = d.findIndex(x => x.id === id);
+  if (i >= 0) return { arr: d, key: 'done', i: i, item: d[i] };
   return null;
 }
 
 // ---------- render ----------
 function render() {
-  for (const list of ['short', 'long', 'done']) {
-    const ul = document.getElementById(list);
-    ul.innerHTML = '';
-    for (const item of state[list]) ul.appendChild(renderItem(item, list));
+  document.body.classList.toggle('custom', view !== 'home');
+  const active = document.getElementById('active');
+  active.innerHTML = '';
+  for (const c of cols()) {
+    const col = document.createElement('div');
+    col.className = 'col';
+    const h = document.createElement('h2');
+    h.textContent = c.title;
+    if (c.list) {   // custom list: tap the title to rename
+      h.contentEditable = 'true'; h.spellcheck = false; h.title = 'Tap to rename';
+      h.onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); h.blur(); } };
+      h.onblur = () => { c.list.name = h.textContent.trim() || c.list.name; render(); };
+    }
+    const ul = document.createElement('ul');
+    ul.dataset.key = c.key;
+    for (const item of c.arr) ul.appendChild(renderItem(item, c.key));
+    col.append(h, ul);
+    active.appendChild(col);
   }
+  const done = document.getElementById('done');
+  done.innerHTML = '';
+  for (const item of doneArr()) done.appendChild(renderItem(item, 'done'));
+  renderDrawer();
   save();
 }
 
-function renderItem(item, list) {
+function renderItem(item, key) {
   const li = document.createElement('li');
   li.dataset.id = item.id;
+  const isDone = key === 'done';
+
+  if (!isDone) {
+    const grip = document.createElement('div');
+    grip.className = 'grip';
+    grip.textContent = '≡';
+    grip.onpointerdown = e => startDrag(e, li);
+    li.append(grip);
+  }
 
   const cb = document.createElement('input');
   cb.type = 'checkbox';
-  cb.checked = list === 'done';
+  cb.checked = isDone;
   cb.onchange = () => {
     const f = findItem(item.id);
-    state[f.list].splice(f.i, 1);
-    if (cb.checked) { item.from = f.list; state.done.unshift(item); }
-    else { state[item.from || 'short'].push(item); }
+    f.arr.splice(f.i, 1);
+    if (cb.checked) { item.from = f.key; doneArr().unshift(item); }
+    else { (colByKey(item.from) || cols()[0]).arr.push(item); }
     render();
   };
 
@@ -119,7 +171,7 @@ function renderItem(item, list) {
   text.className = 'text';
   text.textContent = item.text;
   text.style.color = item.color;
-  if (list !== 'done') {
+  if (!isDone) {
     text.contentEditable = 'true';
     text.spellcheck = false;
     text.onblur = () => { item.text = text.textContent.trim() || item.text; render(); };
@@ -141,18 +193,51 @@ function renderItem(item, list) {
   del.className = 'del';
   del.textContent = '×';
   del.title = 'Remove';
-  del.onclick = () => { const f = findItem(item.id); state[f.list].splice(f.i, 1); render(); };
+  del.onclick = () => { const f = findItem(item.id); f.arr.splice(f.i, 1); render(); };
 
-  if (list !== 'done') {
-    const grip = document.createElement('div');
-    grip.className = 'grip';
-    grip.textContent = '≡';
-    grip.onpointerdown = e => startDrag(e, li);
-    li.append(grip);
-  }
   li.append(cb, text, dot, color, del);
   return li;
 }
+
+// ---------- drawer ----------
+function renderDrawer() {
+  const d = document.getElementById('drawer');
+  d.innerHTML = '';
+  const row = (name, id, deletable) => {
+    const r = document.createElement('div'); r.className = 'row';
+    const b = document.createElement('button'); b.className = 'name' + (view === id ? ' on' : ''); b.textContent = name;
+    b.onclick = () => { view = id; closeDrawer(); render(); };
+    r.append(b);
+    if (deletable) {
+      const x = document.createElement('button'); x.className = 'x'; x.textContent = '×'; x.title = 'Delete list';
+      x.onclick = () => {
+        if (!confirm('Delete list "' + name + '"?')) return;
+        state.lists = state.lists.filter(l => l.id !== id);
+        if (view === id) view = 'home';
+        render();
+      };
+      r.append(x);
+    }
+    return r;
+  };
+  d.append(row('Home', 'home', false));
+  d.append(document.createElement('hr'));
+  for (const l of state.lists) d.append(row(l.name, l.id, true));
+  const n = row('+ New list', null, false);
+  n.id = 'newlist';
+  n.querySelector('button').onclick = () => {
+    const name = prompt('List name');
+    if (!name || !name.trim()) return;
+    const l = { id: uid(), name: name.trim(), items: [], done: [] };
+    state.lists.push(l);
+    view = l.id; closeDrawer(); render();
+  };
+  d.append(n);
+}
+const openDrawer = () => document.body.classList.add('open');
+const closeDrawer = () => document.body.classList.remove('open');
+document.getElementById('menu').onclick = openDrawer;
+document.getElementById('overlay').onclick = closeDrawer;
 
 // ---------- drag & drop (pointer events: works with mouse and touch) ----------
 function startDrag(e, li) {
@@ -171,7 +256,7 @@ function startDrag(e, li) {
     ghost.style.top = (ev.clientY - 20) + 'px';
     const under = document.elementFromPoint(ev.clientX, ev.clientY);
     if (!under) return;
-    const ul = under.closest('#short, #long');
+    const ul = under.closest('#active ul');
     if (!ul) return;
     const over = under.closest('li');
     if (over && over !== li) {
@@ -187,11 +272,11 @@ function startDrag(e, li) {
     grip.removeEventListener('pointercancel', up);
     li.classList.remove('dragging');
     ghost.remove();
-    // rebuild state from DOM order
-    const all = [...state.short, ...state.long];
-    for (const list of ['short', 'long']) {
-      state[list] = [...document.getElementById(list).children]
-        .map(el => all.find(x => x.id === el.dataset.id)).filter(Boolean);
+    // rebuild the on-screen columns from DOM order
+    const all = cols().flatMap(c => c.arr);
+    for (const c of cols()) {
+      const ids = [...document.querySelector('#active ul[data-key="' + c.key + '"]').children].map(el => el.dataset.id);
+      c.arr.splice(0, c.arr.length, ...ids.map(id => all.find(x => x.id === id)).filter(Boolean));
     }
     render();
   };
@@ -201,7 +286,6 @@ function startDrag(e, li) {
 }
 
 // ---------- destination toggle ----------
-let dest = 'short';
 for (const b of document.querySelectorAll('#dest button')) {
   b.onclick = () => {
     dest = b.dataset.v;
@@ -220,22 +304,23 @@ document.getElementById('typed').onsubmit = e => {
 // ---------- splitting speech into items ----------
 function splitItems(raw) {
   let s = ' ' + raw.trim() + ' ';
-  // phrases that mean "next item"
   s = s.replace(/\b(and then|and also|then|also|next item|new item|next|another one|number \w+)\b/gi, '|');
   s = s.replace(/[,;.!?]|\band\b/gi, '|');
   return s.split('|')
     .map(t => t.trim().replace(/^(um|uh|to|i need to|i have to|i want to|remember to)\s+/i, ''))
     .filter(t => t.length > 1)
-    .map(t => t[0].toUpperCase() + t.slice(1));
+    .map(cap);
 }
 
 function addMany(raw) {
   const parts = splitItems(raw);
   for (let p of parts) {
-    let list = dest;
-    const m = p.match(/^(long[- ]term|longterm|short[- ]term)[:\s]+(.*)/i);
-    if (m) { list = /long/i.test(m[1]) ? 'long' : 'short'; p = m[2].trim(); if (p) p = p[0].toUpperCase() + p.slice(1); }
-    if (p) addItem(p, list);
+    let target = view === 'home' ? colByKey(dest) : cols()[0];
+    if (view === 'home') {
+      const m = p.match(/^(long[- ]term|longterm|short[- ]term)[:\s]+(.*)/i);
+      if (m) { target = colByKey(/long/i.test(m[1]) ? 'long' : 'short'); p = cap(m[2].trim()); }
+    }
+    if (p) target.arr.push({ id: uid(), text: p, color: '#ffffff' });
   }
   render();
   return parts.length;
@@ -248,7 +333,7 @@ const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 let rec = null, listening = false;
 
 if (!SR) {
-  status.textContent = 'Voice input needs Chrome or Edge. You can still type items below.';
+  status.textContent = 'Voice input needs Chrome, Edge or Safari. You can still type items below.';
   mic.disabled = true;
 } else {
   rec = new SR();
@@ -282,7 +367,7 @@ if (!SR) {
 }
 
 // ---------- finished list ----------
-document.getElementById('clear').onclick = () => { state.done = []; render(); };
+document.getElementById('clear').onclick = () => { doneArr().splice(0); render(); };
 
 render();
 </script>
