@@ -88,7 +88,14 @@ const KEY = 'todo-v1';
 function load() { try { return JSON.parse(localStorage.getItem(KEY)); } catch (e) { return null; } }
 let state = load() || { short: [], long: [], done: [] };
 if (!state.lists) state.lists = [];
-const save = () => { try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (e) {} };
+// Only a real change to the lists bumps the timestamp and triggers an upload.
+function snap() { const copy = Object.assign({}, state); delete copy.updated; return JSON.stringify(copy); }
+let lastSaved = snap();
+function save() {
+  const now = snap();
+  if (now !== lastSaved) { lastSaved = now; state.updated = Date.now(); schedulePush(); }
+  try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (e) {}
+}
 const uid = () => Math.random().toString(36).slice(2, 10);
 const cap = t => t ? t[0].toUpperCase() + t.slice(1) : t;
 
@@ -233,6 +240,10 @@ function renderDrawer() {
     view = l.id; closeDrawer(); render();
   };
   d.append(n);
+  d.append(document.createElement('hr'));
+  const sy = row(sync ? 'Sync: on' : 'Sync: off (tap to set up)', null, false);
+  sy.querySelector('button').onclick = () => { closeDrawer(); sync ? syncOff() : syncSetup(); };
+  d.append(sy);
 }
 const openDrawer = () => document.body.classList.add('open');
 const closeDrawer = () => document.body.classList.remove('open');
@@ -365,6 +376,94 @@ if (!SR) {
 
   mic.onclick = () => { if (listening) rec.stop(); else rec.start(); };
 }
+
+// ---------- sync (private GitHub Gist) ----------
+const SYNC_KEY = 'todo-sync', FILE = 'todo-data.json', API = 'https://api.github.com';
+let sync = null;
+try { sync = JSON.parse(localStorage.getItem(SYNC_KEY)); } catch (e) {}
+let pushTimer = null, pushing = false;
+const say = t => { status.textContent = t; };
+
+async function gh(path, opts, token) {
+  const r = await fetch(API + path, Object.assign({ cache: 'no-store' }, opts, {
+    headers: { Authorization: 'Bearer ' + (token || sync.token), Accept: 'application/vnd.github+json' }
+  }));
+  if (!r.ok) throw new Error(r.status === 401 ? 'token rejected' : 'GitHub ' + r.status);
+  return r.json();
+}
+const body = () => JSON.stringify({ description: 'To-Do app data', public: false, files: { [FILE]: { content: JSON.stringify(state) } } });
+
+function schedulePush() {
+  if (!sync) return;
+  clearTimeout(pushTimer);
+  pushTimer = setTimeout(push, 800);
+}
+async function push() {
+  pushTimer = null;
+  if (!sync) return;
+  if (pushing) { schedulePush(); return; }
+  pushing = true;
+  try { await gh('/gists/' + sync.gistId, { method: 'PATCH', body: body() }); }
+  catch (e) { say('Sync error: ' + e.message); }
+  pushing = false;
+}
+function busy() {
+  const a = document.activeElement;
+  return listening || pushTimer || pushing || document.querySelector('.dragging') || (a && a.isContentEditable);
+}
+function adopt(remote) {
+  state = remote;
+  if (!state.lists) state.lists = [];
+  if (view !== 'home' && !state.lists.find(l => l.id === view)) view = 'home';
+  lastSaved = snap();
+  render();
+}
+async function pull() {
+  if (!sync || busy() || document.hidden) return;
+  try {
+    const g = await gh('/gists/' + sync.gistId);
+    if (busy()) return;
+    const remote = JSON.parse(g.files[FILE].content);
+    const r = remote.updated || 0, l = state.updated || 0;
+    if (r > l) adopt(remote);
+    else if (l > r) push();
+  } catch (e) { say('Sync error: ' + e.message); }
+}
+
+async function syncSetup() {
+  const token = (prompt('Paste your GitHub token (needs only the "gist" permission)') || '').trim();
+  if (!token) return;
+  say('Connecting...');
+  try {
+    const gists = await gh('/gists?per_page=100', {}, token);
+    const found = gists.find(g => g.files && g.files[FILE]);
+    if (found) {
+      sync = { token: token, gistId: found.id };
+      const g = await gh('/gists/' + found.id);
+      const useRemote = confirm('Found lists already saved on GitHub. OK = use those on this device. Cancel = replace them with the lists on this device.');
+      if (useRemote) adopt(JSON.parse(g.files[FILE].content));
+      else { state.updated = Date.now(); await push(); }
+    } else {
+      state.updated = state.updated || Date.now();
+      const g = await gh('/gists', { method: 'POST', body: body() }, token);
+      sync = { token: token, gistId: g.id };
+    }
+    try { localStorage.setItem(SYNC_KEY, JSON.stringify(sync)); } catch (e) {}
+    say('Sync is on');
+    render();
+  } catch (e) { sync = null; say('Sync setup failed: ' + e.message); }
+}
+function syncOff() {
+  if (!confirm('Turn off sync on this device? Your lists stay here and on GitHub.')) return;
+  sync = null;
+  try { localStorage.removeItem(SYNC_KEY); } catch (e) {}
+  render();
+}
+
+setInterval(pull, 15000);
+document.addEventListener('visibilitychange', pull);
+window.addEventListener('focus', pull);
+pull();
 
 // ---------- finished list ----------
 document.getElementById('clear').onclick = () => { doneArr().splice(0); render(); };
