@@ -7,7 +7,7 @@
 <style>
   * { box-sizing: border-box; }
   html, body { margin: 0; background: #000; color: #fff; font: 17px/1.4 system-ui, sans-serif; }
-  body { padding: 16px; }
+  body { padding: 16px; max-width: 760px; margin: 0 auto; }
   button { font: inherit; }
 
   /* hamburger + drawer */
@@ -33,7 +33,7 @@
   #mic:disabled { opacity: .3; cursor: default; }
   #status { text-align: center; min-height: 1.4em; opacity: .6; margin-bottom: 8px; }
 
-  #typed { display: flex; gap: 12px; align-items: center; max-width: 700px; margin: 0 auto 28px; }
+  #typed { display: flex; gap: 12px; align-items: center; margin: 0 0 28px; }
   #typed input { flex: 1; min-width: 0; background: none; color: #fff; border: none; border-bottom: 1px solid #444; padding: 8px 4px; font: inherit; outline: none; }
   #typed input:focus { border-color: #fff; }
   #dest button { background: none; border: none; color: #fff; opacity: .35; cursor: pointer; padding: 6px 8px; }
@@ -382,7 +382,7 @@ const SYNC_KEY = 'todo-sync', FILE = 'todo-data.json', API = 'https://api.github
 let sync = null;
 try { sync = JSON.parse(localStorage.getItem(SYNC_KEY)); } catch (e) {}
 let pushTimer = null, pushing = false;
-const say = t => { status.textContent = t; };
+const say = t => { status.textContent = t; setTimeout(() => { if (status.textContent === t) status.textContent = ''; }, 3000); };
 
 async function gh(path, opts, token) {
   const r = await fetch(API + path, Object.assign({ cache: 'no-store' }, opts, {
