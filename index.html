@@ -308,7 +308,7 @@ for (const b of document.querySelectorAll('#dest button')) {
 document.getElementById('typed').onsubmit = e => {
   e.preventDefault();
   const inp = document.getElementById('typed-in');
-  addMany(inp.value);
+  addMany(inp.value, false);
   inp.value = '';
 };
 
@@ -316,15 +316,18 @@ document.getElementById('typed').onsubmit = e => {
 function splitItems(raw) {
   let s = ' ' + raw.trim() + ' ';
   s = s.replace(/\b(and then|and also|then|also|next item|new item|next|another one|number \w+)\b/gi, '|');
-  s = s.replace(/[,;.!?]|\band\b/gi, '|');
+  s = s.replace(/[,;.!?]/g, '|');
   return s.split('|')
     .map(t => t.trim().replace(/^(um|uh|to|i need to|i have to|i want to|remember to)\s+/i, ''))
     .filter(t => t.length > 1)
     .map(cap);
 }
 
-function addMany(raw) {
-  const parts = splitItems(raw);
+function addMany(raw, split) {
+  let parts = split === false ? [cap(raw.trim())].filter(Boolean) : splitItems(raw);
+  // never add the same thing twice from one recording
+  const seen = new Set();
+  parts = parts.filter(p => { const k = p.toLowerCase(); if (seen.has(k)) return false; seen.add(k); return true; });
   for (let p of parts) {
     let target = view === 'home' ? colByKey(dest) : cols()[0];
     if (view === 'home') {
@@ -359,12 +362,15 @@ if (!SR) {
     status.textContent = 'Listening... tap again to stop';
   };
   rec.onresult = e => {
-    let interim = '';
-    for (let i = e.resultIndex; i < e.results.length; i++) {
-      if (e.results[i].isFinal) finalText += e.results[i][0].transcript + ' ';
-      else interim += e.results[i][0].transcript;
+    let finals = [], interim = '';
+    for (let i = 0; i < e.results.length; i++) {
+      const t = e.results[i][0].transcript.trim();
+      if (!t) continue;
+      if (e.results[i].isFinal) { if (finals[finals.length - 1] !== t) finals.push(t); }
+      else interim += ' ' + t;
     }
-    status.textContent = (finalText + interim) || 'Listening...';
+    finalText = finals.join('. ') + ' ';
+    status.textContent = (finalText + interim).trim() || 'Listening...';
   };
   rec.onerror = e => { status.textContent = 'Mic error: ' + e.error; };
   rec.onend = () => {
